@@ -9,6 +9,7 @@
 module Syntax    where
 
 import           Unbound.LocallyNameless
+import           Unbound.LocallyNameless.Ops
 
 type Nm = Name Tm
 
@@ -29,7 +30,9 @@ data Form
   | Imply Form Form
   | Conj Form Form
   | Disj Form Form
-  | Equ Tm Tm
+  | TT
+  | FF
+  | A String [Tm]
   deriving (Eq,Ord,Show)
 
 type Sig = [(Nm,Embed Ty)]
@@ -60,3 +63,14 @@ app = App
 
 occurs :: Alpha t => Nm -> t -> Bool
 occurs x t = x `elem` (fv t :: [Nm])
+
+lvl :: [(String,Int)] -> Form -> Int
+lvl _ TT             = 0
+lvl _ FF             = 0
+lvl lvp (A p _)      = k where Just k = lookup p lvp
+lvl lvp (Imply f1 f2) = max (1 + lvl lvp f1) (lvl lvp f2)
+lvl lvp (Conj f1 f2) = max (lvl lvp f1) (lvl lvp f2)
+lvl lvp (Disj f1 f2) = max (lvl lvp f1) (lvl lvp f2)
+lvl lvp (Forall b)   = lvl lvp (snd $ unsafeUnbind b)
+lvl lvp (Exists b)   = lvl lvp (snd $ unsafeUnbind b)
+lvl lvp (Nabla b)    = lvl lvp (snd $ unsafeUnbind b)
