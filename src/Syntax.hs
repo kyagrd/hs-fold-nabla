@@ -111,8 +111,8 @@ infer sqnt@(sig, gs, g)
   | g `elem` gs                   = return $ Node sqnt [] -- init
   | TT <- unsafeForm g            = return $ Node sqnt [] -- TT-R
   | FF `elem` (unsafeForm <$> gs) = return $ Node sqnt [] -- FF-L
-  -- Nabla-L
-  -- Nabla-R
+  -- Nabla-L (local)
+  -- Nabla-R (local)
   | Conj _ <- unsafeForm g = -- Conj-R
     do (lsig, Conj fs) <- unbind g
        Node sqnt <$> mapM infer [(sig,gs,bind lsig f) | f<-fs]
