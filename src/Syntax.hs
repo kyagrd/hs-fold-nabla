@@ -123,6 +123,32 @@ bindSig sig f = permbind (compactSig sig f) f
 compactSig sig f = [xt | xt@(x,_) <- sig, x `elem` fvf]
   where fvf = fv f :: [Nm]
 
+
+-- global signature
+gsig :: Sig
+gsig = fmap Embed <$>
+        [ (s2n"tt", TC"bool")
+        , (s2n"ff", TC"bool")
+        , (s2n"zero", TC"nat")
+        , (s2n"succ", foldr1 Arr $ TC<$>["nat","nat"])
+        ]
+
+tmOf :: (Alternative m, Fresh m) => Sig -> Ty -> m Tm
+tmOf sig Prop        = error "type of Tm cannot involve Prop"
+tmOf sig (Arr t1 t2) = do x <- fresh (s2n "_a")
+                          tm <- tmOf ((x,Embed t1):sig) t2
+                          return $ lam x tm
+tmOf sig ty@(TC a)   = asum $ uncurry tmOfApp <$> tm0tyss
+   where
+     tmOfApp tm0 tys = foldl1 App . (tm0 :) <$> mapM (tmOf sig) tys
+     tm0tyss = [ (V c, init $ unfoldArr t) | (c,Embed t)<-gsig++sig, ty==returnTy t]
+
+
+returnTy = last . unfoldArr
+
+unfoldArr (Arr t1 t2) = t1 : unfoldArr t2
+unfoldArr t           = [t]
+
 infer :: (Alternative m, Fresh m) => Sequent -> m (Tree Sequent)
 infer sqnt@(sig, gs, g)
   -- cut, cL, wL ??
@@ -134,8 +160,8 @@ infer sqnt@(sig, gs, g)
        Node sqnt . (:[]) <$> infer (sig, gs', g')
   | Forall _ <- unsafeForm g = -- Forall-R (raising)
     do (lsig, Forall b) <- unbind g
-       (sig', f') <- raise (sig, lsig, b)
-       Node sqnt . (:[]) <$> infer (sig', gs, bindSig lsig f')
+       (sig', g') <- raise (sig, lsig, b)
+       Node sqnt . (:[]) <$> infer (sig', gs, g')
   | (not . null) [() | Exists _ <- unsafeForm <$> gs] = -- Exists-L (raising)
     do (sig', gs') <- raiseExistsL sig gs
        Node sqnt . (:[]) <$> infer (sig, gs', g)
@@ -162,19 +188,20 @@ infer sqnt@(sig, gs, g)
   -- Exists-R (solving)
 
 -- raise :: Fresh m => (Sig, Sig, Bind (Name Tm, Embed Ty) Form) -> m (Sig, Form)
-raise (sig, lsig, b) =
-  do (xty@(x,Embed xt), f) <- unbind b
-     h <- fresh (s2n "H")
-     let (vs, etys) = unzip lsig
-         tys = [ty | Embed ty <- etys]
-         sig' = (h, Embed $ foldr1 Arr (tys++[xt])) : sig
-         f' = subst x (foldl1 App $ map V (h:vs)) f
-     return (sig, f')
+raise (sig, lsig, b)
+  | null lsig = do (xty@(_,Embed _), f) <- unbind b
+                   return (xty:sig, bindSig lsig f)
+  | otherwise = do (xty@(x,Embed xt), f) <- unbind b
+                   h <- fresh (s2n "H")
+                   let (vs, etys) = unzip lsig
+                       tys = [ty | Embed ty <- etys]
+                       sig' = (h, Embed $ foldr1 Arr (tys++[xt])) : sig
+                       f' = subst x (foldl1 App $ map V (h:vs)) f
+                   return (sig, bindSig lsig f')
 
 raiseExistsL sig (g:gs)
   | Exists _ <- unsafeForm g = do (lsig, Exists b) <- unbind g
-                                  (sig1, f') <- raise (sig, lsig, b)
-                                  let g' = bindSig lsig f'
+                                  (sig1, g') <- raise (sig, lsig, b)
                                   (sig', gs') <- raiseExistsL sig1 gs
                                   return (sig', g':gs')
   | otherwise                = do (sig', gs') <- raiseExistsL sig gs
