@@ -6,6 +6,7 @@
 {-# LANGUAGE ScopedTypeVariables       #-}
 {-# LANGUAGE StandaloneDeriving        #-}
 {-# LANGUAGE TemplateHaskell           #-}
+{-# LANGUAGE TupleSections             #-}
 {-# LANGUAGE UndecidableInstances      #-}
 
 module Syntax    where
@@ -42,9 +43,15 @@ data Form
   deriving (Eq,Ord,Show)
 
 type Sig = [(Nm,Embed Ty)]
-type Def = (String, Bind Sig ([Tm], Form)) -- definitional clause
-type Judgment = SetBind Sig Form
-type Sequent = (Sig, [Judgment], Judgment)
+
+type Def = Bind Sig (Form, Form) -- definition clause
+-- the first form must be atomic, that is,
+-- a def clause should look like "Bind sig (A p [ts], bodyform)"
+
+type Def' = Bind Sig (Jgmt, Jgmt)
+
+type Jgmt = SetBind Sig Form
+type Sequent = (Sig, [Jgmt], Jgmt)
 
 instance Eq (Bind Nm Tm) where (==) = aeq
 instance Ord (Bind Nm Tm) where compare = acompare
@@ -108,10 +115,10 @@ lv1 lvp (Exists b)   = lv1 lvp (snd $ unsafeUnbind b)
 lv1 lvp (Nabla b)    = lv1 lvp (snd $ unsafeUnbind b)
 
 
-unsafeForm :: Judgment -> Form
+unsafeForm :: Jgmt -> Form
 unsafeForm = snd . unsafeUnbind
 
-nab2sig :: Fresh m => Judgment -> m Judgment
+nab2sig :: Fresh m => Jgmt -> m Jgmt
 nab2sig g | Nabla _ <- unsafeForm g =
             do (lsig, Nabla b) <- unbind g
                (xt0@(_,Embed _), f) <- unbind b
@@ -123,6 +130,7 @@ bindSig sig f = permbind (compactSig sig f) f
 compactSig sig f = [xt | xt@(x,_) <- sig, x `elem` fvf]
   where fvf = fv f :: [Nm]
 
+-- TODO integrate matching and unification from hs-nipkow-93
 
 -- global signature
 gsig :: Sig
@@ -132,6 +140,20 @@ gsig = fmap Embed <$>
         , (s2n"zero", TC"nat")
         , (s2n"succ", foldr1 Arr $ TC<$>["nat","nat"])
         ]
+
+-- definitions  (just the plus for now)
+defs = [ bind ((,Embed$TC"nat")<$>[j])
+          (A "plus" [      tmZ, V j,      V j ], TT                      )
+       , bind ((,Embed$TC"nat")<$>[i,j,k])
+          (A "plus" [ tmS(V i), V j, tmS(V k) ], A "plus" [V i, V j, V k])
+       ]
+  where
+    tmZ = V $ s2n "zero"
+    tmS = App (V $ s2n "succ")
+    [i,j,k] = s2n <$>["i","j","k"]
+
+-- raiseDef :: Fresh m => Sig -> Def -> m Def'
+-- raiseDef = undefined -- TODO
 
 tmOf :: (Alternative m, Fresh m) => Sig -> Ty -> m Tm
 tmOf sig Prop        = error "type of Tm cannot involve Prop"
@@ -208,14 +230,14 @@ raiseExistsL sig (g:gs)
                                   return (sig', g:gs')
 raiseExistsL sig []          = return (sig, [])
 
-conjL :: Fresh m => [Judgment] -> m [Judgment]
+conjL :: Fresh m => [Jgmt] -> m [Jgmt]
 conjL (g:gs) | Conj _ <- unsafeForm g =
                do (lsig, Conj fs) <- unbind g
                   ([bindSig lsig f | f<-fs] ++) <$> conjL gs
              | otherwise = (g:) <$> conjL gs
 conjL [] = return []
 
-disjL :: Fresh m => [Judgment] -> m [[Judgment]]
+disjL :: Fresh m => [Jgmt] -> m [[Jgmt]]
 disjL (g:gs) | Disj _ <- unsafeForm g =
                do (lsig, Disj fs) <- unbind g
                   gss <- disjL gs
