@@ -13,7 +13,6 @@ module Syntax    where
 
 import           Control.Applicative
 import           Data.Foldable
-import           Data.Tree
 import           Unbound.LocallyNameless
 import           Unbound.LocallyNameless.Ops
 import           Unbound.LocallyNameless.Types
@@ -142,6 +141,7 @@ gsig = fmap Embed <$>
         ]
 
 -- definitions  (just the plus for now)
+{-
 defs = [ bind ((,Embed$TC"nat")<$>[j])
           (A "plus" [      tmZ, V j,      V j ], TT                      )
        , bind ((,Embed$TC"nat")<$>[i,j,k])
@@ -151,10 +151,38 @@ defs = [ bind ((,Embed$TC"nat")<$>[j])
     tmZ = V $ s2n "zero"
     tmS = App (V $ s2n "succ")
     [i,j,k] = s2n <$>["i","j","k"]
+-}
+
+-- for now assume are args of the definition head is assumed to be variables
+-- as in Tiu's thesis chapter 2
+defs = [ bind ((,Embed nat)<$>[i,j,k])
+          (A "plus" [V i, V j, V k],
+             Disj [ Conj [ V i `eq` tmZ, V j `eq` V k ]
+                  , exists (i',Embed nat) $ exists (k',Embed nat) $
+                    Conj [ V i `eq` tmS(V i'), V k `eq` tmS(V k')
+                         , A "plus" [V i', V j, V k']]
+                  ]
+          )
+       ]
+  where
+    nat = TC"nat"
+    exists x = Exists . bind x
+    forall x = Forall . bind x
+    eq x y = A "=" [x,y]
+    tmZ = V $ s2n "zero"
+    tmS = App (V $ s2n "succ")
+    [i,j,k] = s2n <$>["i","j","k"]
+    [i',k'] = s2n <$>["i'","k'"]
+
+plusDef = head defs
+
+
 
 -- raiseDef :: Fresh m => Sig -> Def -> m Def'
 -- raiseDef = undefined -- TODO
 
+
+{-
 tmOf :: (Alternative m, Fresh m) => Sig -> Ty -> m Tm
 tmOf sig Prop        = error "type of Tm cannot involve Prop"
 tmOf sig (Arr t1 t2) = do x <- fresh (s2n "_a")
@@ -164,6 +192,17 @@ tmOf sig ty@(TC a)   = asum $ uncurry tmOfApp <$> tm0tyss
    where
      tmOfApp tm0 tys = foldl1 App . (tm0 :) <$> mapM (tmOf sig) tys
      tm0tyss = [ (V c, init $ unfoldArr t) | (c,Embed t)<-gsig++sig, ty==returnTy t]
+-}
+
+tmOf :: Fresh m => Sig -> Ty -> m [Tm]
+tmOf sig Prop        = return []
+tmOf sig (Arr t1 t2) = do x <- fresh (s2n "_a")
+                          map (lam x) <$> tmOf ((x,Embed t1):sig) t2
+tmOf sig ty@(TC a)   = concat <$> mapM (uncurry tmOfApp) tm0tyss
+   where
+     tmOfApp tm0 tys = do tss <- mapM (tmOf sig) tys
+                          return $ foldl1 App . (tm0 :) <$> tss
+     tm0tyss = [ (V c, init $ unfoldArr t) | (c,Embed t)<-gsig++sig, ty==returnTy t]
 
 
 returnTy = last . unfoldArr
@@ -171,12 +210,18 @@ returnTy = last . unfoldArr
 unfoldArr (Arr t1 t2) = t1 : unfoldArr t2
 unfoldArr t           = [t]
 
-infer :: (Alternative m, Fresh m) => Sequent -> m (Tree Sequent)
+data PfTree = Thunk Sequent
+            | Node Sequent [PfTree]
+            | Alt Sequent [PfTree]
+            deriving Show
+
+infer :: Fresh m => Sequent -> m PfTree
 infer sqnt@(sig, gs, g)
   -- cut, cL, wL ??
   | g `elem` gs                   = return $ Node sqnt [] -- init
   | TT <- unsafeForm g            = return $ Node sqnt [] -- TT-R
   | FF `elem` (unsafeForm <$> gs) = return $ Node sqnt [] -- FF-L
+  | FF <- unsafeForm g            = return $ Alt sqnt [] -- FF-R
   | (not . null) [() | Nabla _ <- unsafeForm <$> g:gs] =  -- Nabla-R, Nabla-L
     do g':gs' <- mapM nab2sig (g:gs)
        Node sqnt . (:[]) <$> infer (sig, gs', g')
@@ -200,14 +245,20 @@ infer sqnt@(sig, gs, g)
   | (not . null) [() | Disj _ <- unsafeForm <$> gs] = -- Disj-L
     do gss <- disjL gs
        Node sqnt <$> mapM infer [(sig, gs', g) | gs' <- gss]
-  -- Imply-L   TODO
 
   | Disj _ <- unsafeForm g = -- Disj-R
     do (lsig, Disj fs) <- unbind g
-       Node sqnt . (:[]) <$> asum [infer (sig,gs,bindSig lsig f) | f<-fs]
+       Alt sqnt <$> mapM infer [(sig, gs, bindSig lsig f) | f<-fs]
 
-  -- Forall-L (solving)
-  -- Exists-R (solving)
+  | Exists _ <-unsafeForm g = -- Exists-R (solving)
+    pure $ Thunk sqnt -- TODO
+  | (not . null) [() | Forall _ <- unsafeForm <$> gs] = -- Forall-L (solving)
+    pure $ Thunk sqnt -- TODO
+
+  -- | (not . null) [() | Imply _ _ <- unsafeForm <$> gs] = -- Imply-L
+  --  pure $ Thunk sqnt -- there is no occurrences of this rule for 0/1 solver
+  | otherwise = pure $ Thunk sqnt
+
 
 -- raise :: Fresh m => (Sig, Sig, Bind (Name Tm, Embed Ty) Form) -> m (Sig, Form)
 raise (sig, lsig, b)
