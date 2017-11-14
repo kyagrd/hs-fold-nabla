@@ -250,7 +250,7 @@ infer sqnt@(sig, gs, g)
     do (lsig, Disj fs) <- unbind g
        Alt sqnt <$> mapM infer [(sig, gs, bindSig lsig f) | f<-fs]
 
-  | Exists _ <-unsafeForm g = -- Exists-R (solving)
+  | Exists _ <- unsafeForm g = -- Exists-R (solving)
     pure $ Thunk sqnt -- TODO
   | (not . null) [() | Forall _ <- unsafeForm <$> gs] = -- Forall-L (solving)
     pure $ Thunk sqnt -- TODO
