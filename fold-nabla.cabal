@@ -17,12 +17,7 @@ executable fold-nabla
   hs-source-dirs:      src
   main-is:             Main.hs
   default-language:    Haskell2010
-<<<<<<< current
-  build-depends:       base >= 4.7 && < 5, containers -any, unbound -any
-  other-modules:       Syntax
-=======
   build-depends:
      base >= 4.7 && < 5,
      containers -any,
      unbound -any
->>>>>>> before discard
